@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="eo">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 2rem;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    main {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-weight: 600;
+    }
+
+    select,
+    input,
+    button {
+      font-size: 1rem;
+      padding: 0.45rem 0.6rem;
+    }
+
+    select {
+      min-width: 240px;
+    }
+
+    input {
+      min-width: 120px;
+      text-transform: uppercase;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled,
+    select:disabled,
+    input:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    .form-row {
+      margin-bottom: 1rem;
+    }
+
+    .hint {
+      font-size: 0.9rem;
+      color: #666;
+      margin-top: 0.3rem;
+    }
+
+    #status {
+      margin-top: 1rem;
+      color: #555;
+    }
+
+    pre {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #fff;
+      color: #000;
+      border-radius: 8px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+
+    .error {
+      color: #b00020;
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Radioelsendoj en amplitudmodulado</h1>
+
+    <div class="form-row">
+      <label for="languageSelect">Elektu lingvon</label>
+
+      <select id="languageSelect">
+        <option value="EO" selected>Esperanto</option>
+        <option value="E">angla</option>
+        <option value="F">franca</option>
+        <option value="D">germana</option>
+        <option value="S">hispana</option>        
+        <option value="I">itala</option>        
+        <option value="P">portugala</option>
+        <option value="RO">rumana</option>
+        <option value="R">rusa</option>
+        <option value="UK">ukraina</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label for="customLanguageInput">alia lingvo</label>
+
+      <input
+        id="customLanguageInput"
+        type="text"
+        placeholder="ekzemple HI au MAR"
+        maxlength="3"
+        autocomplete="off"
+      >
+
+      <button id="searchButton" type="button">Serchi</button>
+
+      <div class="hint">
+        Se tiu chi kampo ne estas malplena, ghi estas uzata anstatau la menuo.<br>
+        Eblas uzi lingvokodojn de unu ghis tri literoj, kiel ekzemple HI au MAR.<br>
+        Horoj lau Universala Tempo Kunordigita; frekvencoj en kHz.<br>
+        Eventuala indiko "DIGITAL" signifas, ke temas ne pri amplitudmodulado, sed pri dissendado per tekniko nome <a href="https://eo.wikipedia.org/wiki/Digital_Radio_Mondiale" target="_blank">cifereca radio monda (DRM)</a> postulanta specialan ricevilon.<br>
+        Jen <a href="http://www.eibispace.de/dx/README.TXT" target="_blank">listo de lingvokodoj kaj pliaj klarigoj</a>.
+      </div>
+    </div>
+
+    <div id="status">Shargante ...</div>
+
+    <pre id="results"></pre>
+  </main>
+
+  <script>
+    const languageSelect = document.getElementById('languageSelect');
+    const customLanguageInput = document.getElementById('customLanguageInput');
+    const searchButton = document.getElementById('searchButton');
+    const statusElement = document.getElementById('status');
+    const resultsElement = document.getElementById('results');
+
+    document.addEventListener('DOMContentLoaded', loadBroadcasts);
+
+    languageSelect.addEventListener('change', function () {
+      if (!customLanguageInput.value.trim()) {
+        loadBroadcasts();
+      }
+    });
+
+    searchButton.addEventListener('click', loadBroadcasts);
+
+    customLanguageInput.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        loadBroadcasts();
+      }
+    });
+
+    customLanguageInput.addEventListener('input', function () {
+      customLanguageInput.value = customLanguageInput.value
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '')
+        .slice(0, 3);
+    });
+
+    function getSelectedLanguageCode() {
+      const customCode = customLanguageInput.value
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '')
+        .slice(0, 3);
+
+      if (customCode) {
+        return customCode;
+      }
+
+      return languageSelect.value;
+    }
+
+    function loadBroadcasts() {
+      const langCode = getSelectedLanguageCode();
+
+      statusElement.className = '';
+      statusElement.textContent = 'Shargante ...';
+      resultsElement.textContent = '';
+
+      searchButton.disabled = true;
+      languageSelect.disabled = true;
+      customLanguageInput.disabled = true;
+
+      google.script.run
+        .withSuccessHandler(function (data) {
+          statusElement.className = '';
+
+          if (data.count === 1) {
+            statusElement.textContent = 'Trovita unu elsendo por: ' + data.label;
+          } else {
+            statusElement.textContent = 'Trovitaj ' + data.count + ' elsendoj por: ' + data.label;
+          }
+
+          resultsElement.textContent = data.text;
+
+          searchButton.disabled = false;
+          languageSelect.disabled = false;
+          customLanguageInput.disabled = false;
+          customLanguageInput.focus();
+        })
+        .withFailureHandler(function (error) {
+          statusElement.className = 'error';
+          statusElement.textContent = 'Eraro dum shargado.';
+          resultsElement.textContent = error && error.message
+            ? error.message
+            : String(error);
+
+          searchButton.disabled = false;
+          languageSelect.disabled = false;
+          customLanguageInput.disabled = false;
+        })
+        .getBroadcasts(langCode);
+    }
+  </script>
+  <div align="center">
+    <p>Jen tiu chi ret-apo, kiel <a href="https://www.dropbox.com/scl/fi/cwm8ay81u84k2jbp4bzr0/Elsendoj_v1.0.0_1784739467565.apk?rlkey=xocjwhd3rdcqc0xkko6rdawn2&st=n5354f1t&dl=0">Android-apo &quot;Elsendoj&quot;</a>.<br>Ghi estis kreita per Web2APK disponigita de SmartrixLabs. Elshuto, instalo kaj uzo de la APK okazas je propra risko.</p>
+  </div>
+  <div align="center">
+    <p>Fonto: <a href="http://www.eibispace.de/" target="_blank">http://www.eibispace.de/</a></p>
+  </div>
+  <div align="center">
+    <p><a href="https://jhau.de/privateco.html" target="_blank">Privateco</a></p>
+  </div>
+</body>
+</html>
