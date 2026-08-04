@@ -1,7 +1,7 @@
 const SOURCE_URL = 'http://www.eibispace.de/dx/bc-a26.txt';
 
 // Altigi kashmemoran version, kia, la filtra logiko shanghighas
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 
 const LANGUAGES = [
   { code: 'EO', label: 'Esperanto' },
@@ -14,6 +14,21 @@ const LANGUAGES = [
   { code: 'RO', label: 'rumana' },
   { code: 'R',  label: 'rusa' },
   { code: 'UK', label: 'ukraina' }
+];
+
+const MUZ_STATIONS = [
+  'Radio Europa',
+  'Radio Piepzender',
+  'SunDance Radio',
+  'SuperClan Radio',
+  'Radio Casanova',
+  'Radio Horizon',
+  'Radio Delta Int.',
+  'Europa24',
+  'Channel 292',
+  'Radio Mi Amigo',
+  'World Music Radio',
+  'RealMix Radio'
 ];
 
 /*
@@ -60,7 +75,9 @@ function getBroadcasts(langCode) {
   }
 
   const sourceText = fetchSourceText_();
-  const filteredText = filterBroadcastsByLanguage_(sourceText, language.code);
+  const filteredText = language.code === 'MUZ'
+    ? filterBroadcastsByStationNames_(sourceText, MUZ_STATIONS)
+    : filterBroadcastsByLanguage_(sourceText, language.code);
 
   const result = {
     code: language.code,
@@ -165,6 +182,44 @@ function filterBroadcastsByLanguage_(sourceText, langCode) {
   });
 
   return output.join('\n').trim();
+}
+
+function filterBroadcastsByStationNames_(sourceText, stationNames) {
+  const lines = sourceText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .split('\n');
+
+  const startLineRegex = /^[0-9]{4}/;
+
+  const output = [];
+  let inBlock = false;
+
+  lines.forEach(function (line) {
+    if (startLineRegex.test(line)) {
+      if (hasStationName_(line, stationNames)) {
+        output.push(line);
+        inBlock = true;
+      } else {
+        inBlock = false;
+      }
+
+      return;
+    }
+
+    if (inBlock) {
+      output.push(line);
+    }
+  });
+
+  return output.join('\n').trim();
+}
+
+function hasStationName_(line, stationNames) {
+  return stationNames.some(function (stationName) {
+    return line.indexOf(stationName) !== -1;
+  });
 }
 
 function buildLanguageRegex_(langCode) {
