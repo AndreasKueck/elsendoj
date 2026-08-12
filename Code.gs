@@ -29,7 +29,8 @@ const MUZ_STATIONS = [
   'Radio Mi Amigo',
   'World Music Radio',
   'RealMix Radio',
-  'Radio Augusta Int.'
+  'Radio Augusta Int.',
+  'Ifrikya'
 ];
 
 /*
