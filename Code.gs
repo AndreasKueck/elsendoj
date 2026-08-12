@@ -28,7 +28,8 @@ const MUZ_STATIONS = [
   'Channel 292',
   'Radio Mi Amigo',
   'World Music Radio',
-  'RealMix Radio'
+  'RealMix Radio',
+  'Radio Augusta Int.'
 ];
 
 /*
@@ -64,7 +65,11 @@ function doGet() {
 }
 
 function getBroadcasts(langCode) {
-  const language = getLanguageByCode_(langCode);
+  const isEuropeanTargetSearch = String(langCode || '').trim() === 'Eu';
+
+  const language = isEuropeanTargetSearch
+    ? { code: 'Eu', label: 'celregionoj: Eu, WEu, CEu, HOL' }
+    : getLanguageByCode_(langCode);
 
   const cache = CacheService.getScriptCache();
   const cacheKey = CACHE_VERSION + '_broadcasts_' + language.code;
@@ -77,7 +82,9 @@ function getBroadcasts(langCode) {
   const sourceText = fetchSourceText_();
   const filteredText = language.code === 'MUZ'
     ? filterBroadcastsByStationNames_(sourceText, MUZ_STATIONS)
-    : filterBroadcastsByLanguage_(sourceText, language.code);
+    : language.code === 'Eu'
+      ? filterBroadcastsByTargetRegions_(sourceText, ['Eu', 'WEu', 'CEu', 'HOL'])
+      : filterBroadcastsByLanguage_(sourceText, language.code);
 
   const result = {
     code: language.code,
@@ -184,6 +191,39 @@ function filterBroadcastsByLanguage_(sourceText, langCode) {
   return output.join('\n').trim();
 }
 
+function filterBroadcastsByTargetRegions_(sourceText, targetRegions) {
+  const lines = sourceText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .split('\n');
+
+  const startLineRegex = /^[0-9]{4}/;
+  const targetRegionRegex = buildTargetRegionRegex_(targetRegions);
+
+  const output = [];
+  let inBlock = false;
+
+  lines.forEach(function (line) {
+    if (startLineRegex.test(line)) {
+      if (targetRegionRegex.test(line)) {
+        output.push(line);
+        inBlock = true;
+      } else {
+        inBlock = false;
+      }
+
+      return;
+    }
+
+    if (inBlock) {
+      output.push(line);
+    }
+  });
+
+  return output.join('\n').trim();
+}
+
 function filterBroadcastsByStationNames_(sourceText, stationNames) {
   const lines = sourceText
     .replace(/\r\n/g, '\n')
@@ -220,6 +260,20 @@ function hasStationName_(line, stationNames) {
   return stationNames.some(function (stationName) {
     return line.indexOf(stationName) !== -1;
   });
+}
+
+function buildTargetRegionRegex_(targetRegions) {
+  return new RegExp(
+    '(?:^|\\s)' +
+    '[A-Z]{1,3}' +
+    '\\s+' +
+    '(?:[A-Za-z]{2,5}/)*' +
+    '(?:' + targetRegions.map(escapeRegExp_).join('|') + ')' +
+    '(?:/[A-Za-z]{2,5})*' +
+    '\\s+' +
+    '[0-9]{3,5}[A-Za-z0-9.,/-]*' +
+    '(?=\\s|$)'
+  );
 }
 
 function buildLanguageRegex_(langCode) {
