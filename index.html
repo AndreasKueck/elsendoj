@@ -117,8 +117,7 @@
       <input
         id="customLanguageInput"
         type="text"
-        placeholder="ekzemple HI au MAR"
-        maxlength="3"
+        placeholder="ekzemple HI, MAR au D,E"
         autocomplete="off"
       >
 
@@ -126,8 +125,8 @@
 
       <div class="hint">
         Se tiu chi kampo ne estas malplena, ghi estas uzata anstatau la menuo.<br>
-        Eblas uzi lingvokodojn de unu ghis tri literoj, kiel ekzemple HI au MAR.<br>
-        Enigo de MUZ (por muziko) eligas elsendojn, kiuj audigas chefe muzikon kaj kies celregiono estas Europo au Afriko.<br>
+        Eblas uzi lingvokodojn de unu ghis tri literoj, kiel ekzemple HI, MAR (ankau kun komo, kiel ekzemple D,E).<br>
+        Enigo de MUZ (por muziko) eligas elsendojn, kiuj kaj audigas pleje muzikon kaj kies celregiono estas Europo (au kiuj en Europo ofte estas kontentige riceveblaj dum almenau certa parto de tago au nokto).<br>
         Enigo de Eu (atentu pri la majuskla E kaj minuskla u) eligas elsendojn, kies celregiono estas Europo (ghenerale au specife centra au okcidenta).<br>
         Horoj lau Universala Tempo Kunordigita; frekvencoj en kHz.<br>
         Eventuala indiko "DIGITAL" signifas, ke temas ne pri amplitudmodulado, sed pri dissendado per tekniko nome <a href="https://eo.wikipedia.org/wiki/Digital_Radio_Mondiale" target="_blank">cifereca radio monda (DRM)</a> postulanta specialan ricevilon.<br>
@@ -164,29 +163,27 @@
     });
 
     customLanguageInput.addEventListener('input', function () {
-     const sanitizedCode = customLanguageInput.value
-     .replace(/[^A-Za-z]/g, '')
-     .slice(0, 3);
+      const sanitizedCode = customLanguageInput.value
+      .replace(/[^A-Za-z,]/g, '');
 
-     customLanguageInput.value = sanitizedCode === 'Eu'
+    customLanguageInput.value = sanitizedCode === 'Eu'
       ? sanitizedCode
-     : sanitizedCode.toUpperCase();
+      : sanitizedCode.toUpperCase();
     });
 
-function getSelectedLanguageCode() {
-  const customCode = customLanguageInput.value
+  function getSelectedLanguageCode() {
+    const customCode = customLanguageInput.value
     .trim()
-    .replace(/[^A-Za-z]/g, '')
-    .slice(0, 3);
+    .replace(/[^A-Za-z,]/g, '');
 
-  if (customCode) {
-    return customCode === 'Eu'
-      ? customCode
-      : customCode.toUpperCase();
+    if (customCode) {
+      return customCode === 'Eu'
+        ? customCode
+        : customCode.toUpperCase();
+    }
+
+    return languageSelect.value;
   }
-
-  return languageSelect.value;
-}
 
     function loadBroadcasts() {
       const langCode = getSelectedLanguageCode();
@@ -231,7 +228,8 @@ function getSelectedLanguageCode() {
     }
   </script>
   <div align="center">
-    <p>Jen tiu chi ret-apo, kiel <a href="https://www.dropbox.com/scl/fi/cwm8ay81u84k2jbp4bzr0/Elsendoj_v1.0.0_1784739467565.apk?rlkey=xocjwhd3rdcqc0xkko6rdawn2&st=n5354f1t&dl=0">Android-apo &quot;Elsendoj&quot;</a>.<br>Ghi estis kreita per Web2APK disponigita de SmartrixLabs. Elshuto, instalo kaj uzo de la APK okazas je propra risko.<br>Jen rilataj <a href="https://github.com/AndreasKueck/elsendoj" target="_blank">GitHub-deponejo</a> kaj <a href="https://medium.com/westphoenizier/radio-elsendoj-permallongondaj-en-esperanto-kaj-la-germana-b3d5bec516ab" target="_blank">ricevprognozo</a>.</p>
+    <p>Jen tiu chi ret-apo, kiel <a href="https://www.dropbox.com/scl/fi/cwm8ay81u84k2jbp4bzr0/Elsendoj_v1.0.0_1784739467565.apk?rlkey=xocjwhd3rdcqc0xkko6rdawn2&st=n5354f1t&dl=0">Android-apo &quot;Elsendoj&quot;</a>.<br>Ghi estis kreita per Web2APK disponigita de SmartrixLabs. Elshuto, instalo kaj uzo de la APK okazas je propra risko.<br>Jen chi-rilataj <a href="https://github.com/AndreasKueck/elsendoj" target="_blank">GitHub-deponejo</a> kaj <a href="https://medium.com/westphoenizier/radio-elsendoj-permallongondaj-en-esperanto-kaj-la-germana-b3d5bec516ab" target="_blank">ricevprognozo</a>.
+    <br>Jen Snapchat-lensoj &quot;<a href="https://www.snapchat.com/lens/71ef325bea164496913810ce16d71a56" target="_blank">Elsendoj (areo A)</a>&quot;, &quot;<a href="https://www.snapchat.com/lens/88a3466ec42f47f0883852518b5e01c2" target="_blank">Elsendoj (areo B)</a>&quot; kaj &quot;<a href="https://www.snapchat.com/lens/8f02ab0e0f1e4f8f99204bb49f03404d" target="_blank">Elsendoj (areo C)</a>&quot;; jen chi-rilata <a href="https://github.com/AndreasKueck/lensstudioelsendojareoa" target="_blank">GitHub-deponejo</a>.</p>
   </div>
   <div align="center">
     <p>Fonto: <a href="http://www.eibispace.de/" target="_blank">http://www.eibispace.de/</a></p>
