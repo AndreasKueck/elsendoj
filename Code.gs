@@ -1,7 +1,7 @@
 const SOURCE_URL = 'http://www.eibispace.de/dx/bc-a26.txt';
 
 // Altigi kashmemoran version, kia, la filtra logiko shanghighas
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 
 const LANGUAGES = [
   { code: 'EO', label: 'Esperanto' },
@@ -30,7 +30,8 @@ const MUZ_STATIONS = [
   'World Music Radio',
   'RealMix Radio',
   'Radio Augusta Int.',
-  'Ifrikya'
+  'Ifrikya',
+  'dio Nacional Amaz'
 ];
 
 /*
@@ -117,15 +118,14 @@ function getLanguageByCode_(langCode) {
 }
 
 /**
- * EiBi-lingvokodoj povas konsisti el unu ghis tri literoj, ekzemple:
- * D, EO, RO, UK, HI, MAR.
+ * Akceptas literojn kaj komojn, ekzemple:
+ * D, EO, MAR, D,E.
  */
 function normalizeLanguageCode_(langCode) {
   return String(langCode || '')
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z]/g, '')
-    .slice(0, 3);
+    .replace(/[^A-Z,]/g, '');
 }
 
 function fetchSourceText_() {
