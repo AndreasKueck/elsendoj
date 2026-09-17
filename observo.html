@@ -1,0 +1,390 @@
+<style>
+  #observo {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ddd;
+  }
+
+  #observo [hidden] {
+    display: none !important;
+  }
+
+  #observoPanel {
+    margin-top: 1rem;
+  }
+
+  #observo h2 {
+    margin-top: 0;
+  }
+
+  #observoLogList {
+    padding-left: 1.6rem;
+  }
+
+  #observoLogList li {
+    margin-bottom: 0.9rem;
+    padding: 0.8rem;
+    background: #f4f6f8;
+    border-radius: 8px;
+  }
+
+  #observoLogList time {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: #666;
+    font-size: 0.85rem;
+  }
+
+  .observo-log-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+
+  #observoText {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 150px;
+    padding: 0.7rem;
+    font: inherit;
+    resize: vertical;
+    border: 1px solid #aaa;
+    border-radius: 6px;
+  }
+
+  #observoText:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  #observo .observo-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    margin-top: 0.7rem;
+  }
+
+  #observoCounter {
+    font-size: 0.85rem;
+    color: #666;
+  }
+
+  #observoForm {
+    margin-top: 1.5rem;
+  }
+
+  #observoSubmitStatus,
+  #observoLogsStatus {
+    margin-top: 0.7rem;
+  }
+
+  #observo .observo-success {
+    color: #17652a;
+    font-weight: 600;
+  }
+
+  #observo .observo-note {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: #555;
+  }
+</style>
+
+<section id="observo" aria-label="Ricevraportoj">
+  <button
+    id="observoToggle"
+    type="button"
+    aria-expanded="false"
+    aria-controls="observoPanel"
+  >
+    Vidi au raporti ricevojn
+  </button>
+
+  <div id="observoPanel" hidden>
+    <h2>Ricevraportoj</h2>
+
+    <p class="observo-note">
+      Jen la maksimume dek plej novaj akceptitaj raportoj.
+      La plej nova trovighas supre. La montrataj datoj indikas
+      la sendotempon de la raportoj, ne nepre la tempon de ricevo.
+    </p>
+
+    <button id="observoRefresh" type="button">
+      Aktualigi la liston
+    </button>
+
+    <div
+      id="observoLogsStatus"
+      role="status"
+      aria-live="polite"
+    ></div>
+
+    <ol id="observoLogList"></ol>
+
+    <form id="observoForm">
+      <label for="observoText">Via ricevraporto</label>
+
+      <textarea
+        id="observoText"
+        rows="6"
+        maxlength="1800"
+        required
+        aria-describedby="observoHelp observoPrivacy observoCounter"
+        placeholder="Ekzemplo: En 2026-09-17 11:28 UTK mi ricevis Europa24 en 6150 kHz en nordokcidenta Germanujo. SINPO=35323. Germana nostalgi-kanto."
+      ></textarea>
+
+      <p id="observoHelp" class="observo-note">
+        Vi povas skribi en Esperanto au alia lingvo.
+        Necesas almenau unu frekvenco kun la unuo kHz,
+        nomo de radiostacio kaj SINPO-indiko kun kvin ciferoj
+        de 1 ghis 5, ekzemple SINPO=34343.
+        Ne enmetu kontrauleghan au maldecan enhavon,
+        propagandon, insultojn au reklamon.
+      </p>
+
+      <p id="observoPrivacy" class="observo-note">
+        Sendante, vi transdonas la tekston al OpenAI por automata
+        kontrolo kaj traduko. Akceptita raporto aperos publike
+        en Esperanto. Ne enmetu konfidencajn au nenecesajn
+        personajn informojn.
+      </p>
+
+      <div class="observo-actions">
+        <button id="observoSubmit" type="submit">
+          Raporti ricevon
+        </button>
+
+        <span id="observoCounter">0 / 1800</span>
+      </div>
+
+      <div
+        id="observoSubmitStatus"
+        role="status"
+        aria-live="polite"
+      ></div>
+    </form>
+  </div>
+</section>
+
+<script>
+(function () {
+  'use strict';
+
+  const toggleButton = document.getElementById('observoToggle');
+  const panel = document.getElementById('observoPanel');
+  const refreshButton = document.getElementById('observoRefresh');
+  const logsStatus = document.getElementById('observoLogsStatus');
+  const logList = document.getElementById('observoLogList');
+
+  const form = document.getElementById('observoForm');
+  const textarea = document.getElementById('observoText');
+  const submitButton = document.getElementById('observoSubmit');
+  const submitStatus = document.getElementById('observoSubmitStatus');
+  const counter = document.getElementById('observoCounter');
+
+  let loading = false;
+  let submitting = false;
+
+  // Verhindert, dass eine ältere Leseantwort eine inzwischen
+  // nach erfolgreichem Senden aktualisierte Liste überschreibt.
+  let listRequestVersion = 0;
+
+  toggleButton.addEventListener('click', function () {
+    const opening = panel.hidden;
+
+    panel.hidden = !opening;
+    toggleButton.setAttribute('aria-expanded', String(opening));
+
+    if (opening && !loading && !submitting) {
+      loadLogs();
+    }
+  });
+
+  refreshButton.addEventListener('click', loadLogs);
+
+  textarea.addEventListener('input', updateCounter);
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+
+    if (submitting) {
+      return;
+    }
+
+    const text = textarea.value.trim();
+
+    if (!text) {
+      setSubmitStatus('Bonvolu enigi ricevraporton.', true);
+      textarea.focus();
+      return;
+    }
+
+    if (text.length > 1800) {
+      setSubmitStatus(
+        'La raporto rajtas enhavi maksimume 1800 signojn.',
+        true
+      );
+      return;
+    }
+
+    // Alle noch ausstehenden Listenabfragen ungültig machen.
+    listRequestVersion++;
+    loading = false;
+    submitting = true;
+    updateControls();
+
+    setSubmitStatus(
+      'Kontrolado kaj tradukado de la raporto ...',
+      false
+    );
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        submitting = false;
+        updateControls();
+
+        if (!result || !result.accepted) {
+          setSubmitStatus(
+            result && result.message
+              ? result.message
+              : 'La raporto ne estis akceptita.',
+            true
+          );
+
+          logsStatus.textContent = '';
+          textarea.focus();
+          return;
+        }
+
+        renderLogs(result.logs);
+
+        textarea.value = '';
+        updateCounter();
+
+        submitStatus.className = 'observo-success';
+        submitStatus.textContent = result.message;
+
+        textarea.focus();
+      })
+      .withFailureHandler(function (error) {
+        submitting = false;
+        updateControls();
+
+        // Bei einem Verbindungsabbruch könnte das Speichern
+        // serverseitig bereits erfolgt sein: keine falsche Zusage.
+        setSubmitStatus(
+          getErrorMessage(error) +
+          ' Se la konekto interrompighis, aktualigu la liston, ' +
+          'antau ol sendi denove.',
+          true
+        );
+
+        logsStatus.textContent = '';
+        textarea.focus();
+      })
+      .submitReceptionReport(text);
+  });
+
+  function loadLogs() {
+    if (loading || submitting) {
+      return;
+    }
+
+    const version = ++listRequestVersion;
+
+    loading = true;
+    updateControls();
+
+    logsStatus.className = '';
+    logsStatus.textContent = 'Shargante ricevraportojn ...';
+
+    google.script.run
+      .withSuccessHandler(function (logs) {
+        if (version !== listRequestVersion) {
+          return;
+        }
+
+        loading = false;
+        updateControls();
+        renderLogs(logs);
+      })
+      .withFailureHandler(function (error) {
+        if (version !== listRequestVersion) {
+          return;
+        }
+
+        loading = false;
+        updateControls();
+
+        logsStatus.className = 'error';
+        logsStatus.textContent = getErrorMessage(error);
+      })
+      .getReceptionLogs();
+  }
+
+  function renderLogs(logs) {
+    logList.replaceChildren();
+    logsStatus.className = '';
+
+    if (!Array.isArray(logs) || logs.length === 0) {
+      logsStatus.textContent = 'Ankorau neniu ricevraporto.';
+      return;
+    }
+
+    logs.slice(0, 10).forEach(function (log) {
+      const item = document.createElement('li');
+      const time = document.createElement('time');
+      const text = document.createElement('div');
+
+      time.dateTime = log.createdAt;
+      time.textContent = formatUtc(log.createdAt);
+
+      text.className = 'observo-log-text';
+
+      // Keine Ausführung von HTML aus Eingaben oder API-Antworten.
+      text.textContent = log.text;
+
+      item.appendChild(time);
+      item.appendChild(text);
+      logList.appendChild(item);
+    });
+
+    logsStatus.textContent = 'La plej novaj raportoj estas montrataj.';
+  }
+
+  function formatUtc(value) {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+
+    return date.toISOString()
+      .replace('T', ' ')
+      .replace(/\.\d{3}Z$/, ' UTK');
+  }
+
+  function updateCounter() {
+    counter.textContent = textarea.value.length + ' / 1800';
+  }
+
+  function updateControls() {
+    refreshButton.disabled = loading || submitting;
+    submitButton.disabled = submitting;
+    textarea.disabled = submitting;
+  }
+
+  function setSubmitStatus(message, isError) {
+    submitStatus.className = isError ? 'error' : '';
+    submitStatus.textContent = message;
+  }
+
+  function getErrorMessage(error) {
+    return error && error.message
+      ? error.message
+      : 'Okazis neatendita eraro. Bonvolu provi denove.';
+  }
+})();
+</script>
