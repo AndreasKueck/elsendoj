@@ -5,4 +5,4 @@ Tio chi estas la Guglo-Apoj-Skripto-pakajho por la supre menciitaj apoj. Ili eli
 
 Chi tiu projekto estas publikigita sub la [MIT-permesilo](./LICENSE).
 
-Vi estas libera uzi, modifi kaj distribui chi tiun Lens-Studio-projekton, se vi konservas la kopirajtan avizon.
+Vi estas libera uzi, modifi kaj distribui chi tiun projekton, se vi konservas la kopirajtan avizon.
