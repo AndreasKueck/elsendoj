@@ -1,0 +1,895 @@
+<script>
+const MZKSearch = (function () {
+  'use strict';
+
+  const PDF_JS_URL =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs';
+
+  const PDF_WORKER_URL =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs';
+
+  /*
+   * Die bisherigen Grenzen für Zeiten, Tage, Station
+   * und Sprache bleiben erhalten.
+   *
+   * Die Grenze zur Frequenzspalte wird jetzt aus den
+   * tatsächlichen Textpositionen der PDF bestimmt.
+   */
+  const COLUMN_LIMITS = [
+    0.075,
+    0.145,
+    0.215,
+    0.391,
+    0.432
+  ];
+
+  const LINE_TOLERANCE = 3;
+  const ROW_TOP_TOLERANCE = 4;
+
+  let libraryPromise = null;
+  let schedulePromise = null;
+  let measureContext = null;
+
+  // ==========================================================
+  // Suche
+  // ==========================================================
+
+  async function getBroadcasts(code) {
+    const normalized = String(code || '').trim().toUpperCase();
+
+    const match = /^MZK([01][0-9]|2[0-3])$/.exec(normalized);
+
+    if (!match) {
+      throw new Error(
+        'Bonvolu enigi MZK kaj du ciferojn de 00 ghis 23, ' +
+        'ekzemple MZK03.'
+      );
+    }
+
+    const hour = Number(match[1]);
+    const windowStart = hour * 60;
+    const windowEnd = windowStart + 60;
+
+    const schedule = await loadSchedule();
+
+    /*
+     * Ausschließlich nach der Anfangszeit auswählen.
+     *
+     * MZK03: 0300 bis 0359.
+     * Die Endzeit hat keinen Einfluss auf die Auswahl.
+     */
+    const matches = schedule.records.filter(function (record) {
+      return (
+        record.start >= windowStart &&
+        record.start < windowEnd
+      );
+    });
+
+    matches.sort(function (a, b) {
+      return (
+        a.start - b.start ||
+        a.page - b.page ||
+        a.row - b.row
+      );
+    });
+
+    let text = matches.map(function (record) {
+      return record.text;
+    }).join('\n');
+
+    if (!text) {
+      text = 'Neniu muzika elsendo trovita por la elektita horo.';
+    }
+
+    const hasInvalidEnd = matches.some(function (record) {
+      return record.end <= record.start;
+    });
+
+    if (hasInvalidEnd) {
+      text +=
+        '\n\nNoto: La fonto enhavas almenau unu finhoron, ' +
+        'kiu ne estas post la komenchoro. Tiu indiko estas ' +
+        'konservita. La sercho uzas nur la komenchoron.';
+    }
+
+    return {
+      code: normalized,
+      label:
+        'muzikaj elsendoj kun komenco en ' +
+        String(hour).padStart(2, '0') +
+        '00-' +
+        String(hour).padStart(2, '0') +
+        '59 UTK',
+      count: matches.length,
+      text: text,
+      sourceUrl: schedule.sourceUrl,
+      credit: schedule.credit
+    };
+  }
+
+  // ==========================================================
+  // PDF laden
+  // ==========================================================
+
+  function loadSchedule() {
+    if (!schedulePromise) {
+      schedulePromise = readSchedule().catch(function (error) {
+        schedulePromise = null;
+        throw error;
+      });
+    }
+
+    return schedulePromise;
+  }
+
+  function loadLibrary() {
+    if (!libraryPromise) {
+      libraryPromise = import(PDF_JS_URL)
+        .then(function (library) {
+          library.GlobalWorkerOptions.workerSrc = PDF_WORKER_URL;
+          return library;
+        })
+        .catch(function () {
+          libraryPromise = null;
+
+          throw new Error(
+            'La PDF-legilo ne povis esti shargita. ' +
+            'Bonvolu kontroli la retkonekton kaj uzi ' +
+            'aktualan retumilon.'
+          );
+        });
+    }
+
+    return libraryPromise;
+  }
+
+  function requestPdf() {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (error) {
+          reject(new Error(
+            error && error.message
+              ? error.message
+              : 'La muzika PDF-dosiero ne povis esti shargita.'
+          ));
+        })
+        .getMusicPdf();
+    });
+  }
+
+  async function readSchedule() {
+    const loaded = await Promise.all([
+      loadLibrary(),
+      requestPdf()
+    ]);
+
+    const library = loaded[0];
+    const source = loaded[1];
+
+    if (
+      !source ||
+      typeof source.base64 !== 'string' ||
+      !source.base64
+    ) {
+      throw new Error(
+        'La muzika fonto ne liveris PDF-datumojn.'
+      );
+    }
+
+    let bytes;
+
+    try {
+      const binary = atob(source.base64);
+
+      bytes = new Uint8Array(binary.length);
+
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+    } catch (error) {
+      throw new Error(
+        'La muzika PDF-dosiero ne povis esti malkodita.'
+      );
+    }
+
+    source.base64 = '';
+
+    let loadingTask;
+    let pdf;
+
+    try {
+      loadingTask = library.getDocument({
+        data: bytes,
+        isEvalSupported: false
+      });
+
+      pdf = await loadingTask.promise;
+    } catch (error) {
+      if (loadingTask) {
+        try {
+          await loadingTask.destroy();
+        } catch (ignored) {
+          // Der ursprüngliche Fehler bleibt maßgeblich.
+        }
+      }
+
+      throw new Error(
+        'La muzika PDF-dosiero ne povis esti malfermita. ' +
+        'Bonvolu uzi aktualan retumilon kaj kontroli, ' +
+        'chu la dosiero estas valida PDF sen pasvorto.'
+      );
+    }
+
+    const pages = [];
+
+    try {
+      /*
+       * Zuerst die positionierten Textfragmente aller
+       * Tabellenseiten einlesen.
+       *
+       * Seite 1 ist das bekannte Deckblatt dieser Liste.
+       */
+      for (
+        let pageNumber = 2;
+        pageNumber <= pdf.numPages;
+        pageNumber++
+      ) {
+        const page = await pdf.getPage(pageNumber);
+
+        const content = await page.getTextContent();
+
+        const viewport = page.getViewport({
+          scale: 1
+        });
+
+        pages.push({
+          number: pageNumber,
+          width: viewport.width,
+          height: viewport.height,
+          words: getPositionedWords(
+            content,
+            viewport,
+            library
+          )
+        });
+
+        page.cleanup();
+      }
+    } finally {
+      await pdf.destroy();
+    }
+
+    /*
+     * Nicht mehr die feste, zu weit rechts liegende
+     * Grenze 0.758 verwenden.
+     */
+    const frequencyBoundary = detectFrequencyBoundary(pages);
+
+    const records = [];
+
+    pages.forEach(function (page) {
+      const pageRecords = parsePage(
+        page,
+        frequencyBoundary
+      );
+
+      pageRecords.forEach(function (record) {
+        records.push(record);
+      });
+    });
+
+    validateSchedule(records, frequencyBoundary);
+
+    return {
+      records: records,
+      sourceUrl: source.sourceUrl,
+      credit: source.credit
+    };
+  }
+
+  // ==========================================================
+  // Frequenzspalte aus der PDF bestimmen
+  // ==========================================================
+
+  function detectFrequencyBoundary(pages) {
+    const positions = [];
+
+    /*
+     * Typische Frequenzangaben mit Senderkürzel:
+     *
+     * 6165-emr
+     * 11760-hab
+     * 5940v-cbo
+     * 11830-gal
+     *
+     * Reine Zahlen oder Sendezeiten sind keine Kandidaten.
+     */
+    const frequencyPattern =
+      /[0-9]{3,5}(?:[.,][0-9]+)?[v‡]?[-‐‑–][A-Za-z]{2,5}/;
+
+    pages.forEach(function (page) {
+      page.words.forEach(function (word) {
+        const relativeX = word.x / page.width;
+
+        if (
+          relativeX >= 0.60 &&
+          relativeX <= 0.90 &&
+          frequencyPattern.test(word.text)
+        ) {
+          positions.push(relativeX);
+        }
+      });
+    });
+
+    if (positions.length < 20) {
+      throw new Error(
+        'La komenco de la frekvenca kolumno ne povis ' +
+        'esti rekonita. Tro malmultaj frekvencoj kun ' +
+        'sendilaj kodoj estis trovitaj.'
+      );
+    }
+
+    positions.sort(function (a, b) {
+      return a - b;
+    });
+
+    /*
+     * Die erste Frequenz einer Zeile beginnt wiederholt
+     * an derselben linken Position.
+     *
+     * Das untere Zehntel vermeidet, dass einzelne weiter
+     * links stehende Frequenzverweise im Programmtext
+     * die Grenze bestimmen. Zweite und dritte Frequenzen
+     * liegen dagegen weiter rechts.
+     */
+    const index = Math.floor((positions.length - 1) * 0.10);
+    const frequencyStart = positions[index];
+
+    /*
+     * Kleine Toleranz links vom erkannten Spaltenbeginn.
+     */
+    const boundary = frequencyStart - 0.006;
+
+    if (
+      boundary <= COLUMN_LIMITS[4] ||
+      boundary < 0.59 ||
+      boundary > 0.86
+    ) {
+      throw new Error(
+        'La rekonita frekvenca kolumno havas ' +
+        'neatenditan pozicion.'
+      );
+    }
+
+    return boundary;
+  }
+
+  // ==========================================================
+  // Tabellenzeilen zusammensetzen
+  // ==========================================================
+
+  function parsePage(page, frequencyBoundary) {
+    const words = page.words;
+
+    if (!words.length) {
+      return [];
+    }
+
+    let bottom = page.height * 0.95;
+
+    words.forEach(function (word) {
+      if (
+        word.text === 'Notes' &&
+        word.x < page.width * 0.15 &&
+        word.y > page.height * 0.25
+      ) {
+        bottom = Math.min(bottom, word.y - 5);
+      }
+    });
+
+    const bodyWords = words.filter(function (word) {
+      return (
+        word.y > page.height * 0.01 &&
+        word.y < bottom
+      );
+    });
+
+    const starts = bodyWords.filter(function (word) {
+      const relativeX = word.x / page.width;
+
+      return (
+        relativeX >= 0.015 &&
+        relativeX < COLUMN_LIMITS[0] &&
+        /^[0-9]{4}[‡v]?$/.test(word.text) &&
+        parseTime(word.text.slice(0, 4), false) !== null
+      );
+    });
+
+    starts.sort(function (a, b) {
+      return a.y - b.y || a.x - b.x;
+    });
+
+    /*
+     * Stundenüberschriften zunächst ebenfalls als
+     * Begrenzung berücksichtigen.
+     */
+    const anchors = [];
+
+    starts.forEach(function (word) {
+      const previous = anchors[anchors.length - 1];
+
+      if (
+        previous &&
+        Math.abs(previous.y - word.y) <= LINE_TOLERANCE
+      ) {
+        return;
+      }
+
+      anchors.push({
+        y: word.y,
+        startText: word.text,
+        start: parseTime(word.text.slice(0, 4), false)
+      });
+    });
+
+    const records = [];
+
+    anchors.forEach(function (anchor, index) {
+      const next = anchors[index + 1];
+
+      const rowBottom = next
+        ? next.y - ROW_TOP_TOLERANCE
+        : bottom;
+
+      const rowWords = bodyWords.filter(function (word) {
+        return (
+          word.y >= anchor.y - ROW_TOP_TOLERANCE &&
+          word.y < rowBottom
+        );
+      });
+
+      const stopWord = rowWords.find(function (word) {
+        const relativeX = word.x / page.width;
+
+        return (
+          relativeX >= COLUMN_LIMITS[0] &&
+          relativeX < COLUMN_LIMITS[1] &&
+          Math.abs(word.y - anchor.y) <= ROW_TOP_TOLERANCE &&
+          /^[0-9]{4}[‡v]?$/.test(word.text) &&
+          parseTime(word.text.slice(0, 4), true) !== null
+        );
+      });
+
+      /*
+       * Eine Stundenüberschrift hat keine Stoppzeit
+       * und ist daher keine Sendung.
+       */
+      if (!stopWord) {
+        return;
+      }
+
+      const columns = [[], [], [], [], []];
+
+      rowWords.forEach(function (word) {
+        const relativeX = word.x / page.width;
+
+        if (relativeX < COLUMN_LIMITS[1]) {
+          return;
+        }
+
+        let column;
+
+        if (relativeX < COLUMN_LIMITS[2]) {
+          column = 0; // Tage
+        } else if (relativeX < COLUMN_LIMITS[3]) {
+          column = 1; // Station
+        } else if (relativeX < COLUMN_LIMITS[4]) {
+          column = 2; // Sprache
+        } else if (relativeX < frequencyBoundary) {
+          column = 3; // Programm
+        } else {
+          column = 4; // Frequenzen
+        }
+
+        columns[column].push(word);
+      });
+
+      const cells = columns.map(joinCell);
+
+      cells[0] = cells[0].replace(/,\s+/g, ',');
+
+      cells[2] = cells[2]
+        .replace(/\s*\/\s*/g, '/')
+        .trim();
+
+      const station = cells[1];
+
+      if (!station) {
+        throw new Error(
+          'La PDF-tabelo ne povis esti fidinde legita ' +
+          'en pagho ' + page.number + '. ' +
+          'Mankas la stacia nomo che ' + anchor.startText + '.'
+        );
+      }
+
+      const endText = stopWord.text.slice(0, 4);
+      let end = parseTime(endText, true);
+
+      if (end === 0 && anchor.start > 0) {
+        end = 1440;
+      }
+
+      const outputParts = [
+        anchor.startText,
+        stopWord.text
+      ].concat(cells);
+
+      records.push({
+        start: anchor.start,
+        end: end,
+        page: page.number,
+        row: index,
+        station: station,
+        programme: cells[3],
+        frequencies: cells[4],
+        text: outputParts.filter(function (part) {
+          return part !== '';
+        }).join(' ')
+      });
+    });
+
+    return records;
+  }
+
+  // ==========================================================
+  // Textpositionen und Abstände
+  // ==========================================================
+
+  function getPositionedWords(content, viewport, library) {
+    const result = [];
+
+    if (!measureContext) {
+      const canvas = document.createElement('canvas');
+      measureContext = canvas.getContext('2d');
+    }
+
+    content.items.forEach(function (item) {
+      if (
+        !item ||
+        typeof item.str !== 'string' ||
+        !item.str.trim() ||
+        !item.transform
+      ) {
+        return;
+      }
+
+      const transform = library.Util.transform(
+        viewport.transform,
+        item.transform
+      );
+
+      const x = transform[4];
+      const y = transform[5];
+
+      const fontSize =
+        Math.hypot(transform[2], transform[3]) || 10;
+
+      const style =
+        content.styles && content.styles[item.fontName];
+
+      const family = style && style.fontFamily
+        ? style.fontFamily
+        : 'sans-serif';
+
+      const originalText = item.str.replace(/\u00a0/g, ' ');
+      const totalWidth = Math.abs(item.width || 0);
+
+      let measuredWidth = 0;
+
+      if (measureContext) {
+        measureContext.font = fontSize + 'px ' + family;
+
+        measuredWidth =
+          measureContext.measureText(originalText).width;
+      }
+
+      function offsetAt(characterIndex) {
+        if (characterIndex <= 0) {
+          return 0;
+        }
+
+        if (characterIndex >= originalText.length) {
+          return totalWidth;
+        }
+
+        if (measureContext && measuredWidth > 0) {
+          return (
+            measureContext.measureText(
+              originalText.slice(0, characterIndex)
+            ).width /
+            measuredWidth *
+            totalWidth
+          );
+        }
+
+        return (
+          characterIndex /
+          Math.max(originalText.length, 1) *
+          totalWidth
+        );
+      }
+
+      const expression = /\S+/g;
+      let match;
+
+      while ((match = expression.exec(originalText)) !== null) {
+        const startIndex = match.index;
+        const endIndex = startIndex + match[0].length;
+
+        const text = cleanPdfText(match[0]);
+
+        if (!text) {
+          continue;
+        }
+
+        result.push({
+          x: x + offsetAt(startIndex),
+          right: x + offsetAt(endIndex),
+          y: y,
+          fontSize: fontSize,
+          text: text,
+
+          /*
+           * Explizite Leerzeichen im PDF-Text erhalten.
+           * Fehlen sie, entscheidet später der Abstand.
+           */
+          spaceBefore:
+            startIndex > 0 &&
+            /\s/.test(originalText.charAt(startIndex - 1)),
+
+          spaceAfter:
+            endIndex < originalText.length &&
+            /\s/.test(originalText.charAt(endIndex))
+        });
+      }
+    });
+
+    return result;
+  }
+
+  function joinCell(words) {
+    if (!words.length) {
+      return '';
+    }
+
+    const sorted = words.slice().sort(function (a, b) {
+      return a.y - b.y || a.x - b.x;
+    });
+
+    const lines = [];
+
+    sorted.forEach(function (word) {
+      let line = lines[lines.length - 1];
+
+      if (
+        !line ||
+        Math.abs(line.y - word.y) > LINE_TOLERANCE
+      ) {
+        line = {
+          y: word.y,
+          words: []
+        };
+
+        lines.push(line);
+      }
+
+      line.words.push(word);
+    });
+
+    const text = lines.map(function (line) {
+      line.words.sort(function (a, b) {
+        return a.x - b.x;
+      });
+
+      let output = '';
+      let previous = null;
+
+      line.words.forEach(function (word) {
+        if (!previous) {
+          output = word.text;
+          previous = word;
+          return;
+        }
+
+        const gap = word.x - previous.right;
+
+        const referenceFontSize = Math.min(
+          previous.fontSize,
+          word.fontSize
+        );
+
+        /*
+         * Direkt aneinander anschließende PDF-Fragmente
+         * gehören häufig zum selben Wort:
+         *
+         * "o" + "ft" + "en" -> "often"
+         *
+         * Bei einem tatsächlichen Wortabstand oder einem
+         * expliziten Leerzeichen dagegen trennen.
+         */
+        const needsSpace =
+          previous.spaceAfter ||
+          word.spaceBefore ||
+          gap > referenceFontSize * 0.14;
+
+        output += (needsSpace ? ' ' : '') + word.text;
+        previous = word;
+      });
+
+      return output;
+    }).join(' ');
+
+    return text
+      .replace(/\s+/g, ' ')
+      .replace(/\(\s+/g, '(')
+      .replace(/\s+\)/g, ')')
+      .replace(/([0-9])\s+(st|nd|rd|th)\b/g, '$1$2')
+      .replace(
+        /([A-Za-zÀ-ž0-9])-\s+(?=[A-Za-zÀ-ž0-9])/g,
+        '$1-'
+      )
+      .trim();
+  }
+
+  function cleanPdfText(text) {
+    return String(text)
+      .normalize('NFKC')
+      .replace(/\u00ad/g, '')
+      .replace(/\uFFFE/g, '-')
+      .replace(/Ɵ/g, 'ti')
+      .replace(/Ō/g, 'ft')
+      .replace(/Ʃ/g, 'tt')
+      .replace(/ƞ/g, 'tf')
+      .replace(/ƫ/g, 'tti')
+      .trim();
+  }
+
+  function parseTime(text, allow2400) {
+    if (!/^[0-9]{4}$/.test(text)) {
+      return null;
+    }
+
+    if (text === '2400') {
+      return allow2400 ? 1440 : null;
+    }
+
+    const hour = Number(text.slice(0, 2));
+    const minute = Number(text.slice(2, 4));
+
+    if (
+      hour < 0 ||
+      hour > 23 ||
+      minute < 0 ||
+      minute > 59
+    ) {
+      return null;
+    }
+
+    return hour * 60 + minute;
+  }
+
+  // ==========================================================
+  // Plausibilitätsprüfung mit Diagnose bei einem Fehler
+  // ==========================================================
+
+  function validateSchedule(records, frequencyBoundary) {
+    const hourCounts = Array(24).fill(0);
+    const frequencyCounts = Array(24).fill(0);
+
+    let frequencyRows = 0;
+
+    records.forEach(function (record) {
+      const hour = Math.floor(record.start / 60);
+
+      if (hour >= 0 && hour <= 23) {
+        hourCounts[hour]++;
+
+        if (/[0-9]{3,5}/.test(record.frequencies || '')) {
+          frequencyCounts[hour]++;
+          frequencyRows++;
+        }
+      }
+    });
+
+    const missingHours = [];
+
+    hourCounts.forEach(function (count, hour) {
+      if (count === 0) {
+        missingHours.push(String(hour).padStart(2, '0'));
+      }
+    });
+
+    const isValid =
+      records.length > 0 &&
+      missingHours.length === 0 &&
+      frequencyRows >= records.length / 2;
+
+    if (isValid) {
+      return;
+    }
+
+    const details = [
+      'MZK-DIAGNOZO',
+      '',
+      'Legitaj sendovicoj: ' + records.length,
+      'Vicoj kun rekonita frekvenco: ' + frequencyRows,
+      'Frekvenca kolumng limo: ' +
+        (frequencyBoundary * 100).toFixed(2) +
+        '% de la pagholargho',
+      'Horoj sen rekonitaj vicoj: ' +
+        (missingHours.length ? missingHours.join(', ') : 'neniu'),
+      '',
+      'Horo: sendovicoj / vicoj kun frekvenco'
+    ];
+
+    hourCounts.forEach(function (count, hour) {
+      details.push(
+        String(hour).padStart(2, '0') +
+        ': ' + count +
+        ' / ' + frequencyCounts[hour]
+      );
+    });
+
+    let examples = records.filter(function (record) {
+      return record.start >= 180 && record.start < 240;
+    }).slice(0, 3);
+
+    if (!examples.length) {
+      examples = records.slice(0, 3);
+    }
+
+    if (examples.length) {
+      details.push('', 'Ekzemploj de la rekonitaj vicoj:');
+
+      examples.forEach(function (record) {
+        details.push(
+          '',
+          'Pagho: ' + record.page,
+          'Stacio: ' + (record.station || '(malplena)'),
+          'Programo: ' + (record.programme || '(malplena)'),
+          'Frekvencoj: ' +
+            (record.frequencies || '(malplenaj)'),
+          'Tuta vico: ' + record.text
+        );
+      });
+    }
+
+    const turkiyeExample = records.find(function (record) {
+      return (
+        record.start === 190 &&
+        /Türkiye|Turkiye/i.test(record.text || '')
+      );
+    });
+
+    if (turkiyeExample) {
+      details.push(
+        '',
+        'Kontrolvico 0310:',
+        'Stacio: ' + (turkiyeExample.station || '(malplena)'),
+        'Programo: ' +
+          (turkiyeExample.programme || '(malplena)'),
+        'Frekvencoj: ' +
+          (turkiyeExample.frequencies || '(malplenaj)'),
+        'Tuta vico: ' + turkiyeExample.text
+      );
+    }
+
+    throw new Error(details.join('\n'));
+  }
+
+  return {
+    getBroadcasts: getBroadcasts
+  };
+})();
+</script>
