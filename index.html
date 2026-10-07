@@ -43,7 +43,7 @@
     }
 
     input {
-      min-width: 120px;      
+      min-width: 120px;
     }
 
     button {
@@ -87,6 +87,14 @@
       color: #b00020;
       font-weight: 600;
     }
+
+    #musicSource[hidden] {
+      display: none !important;
+    }
+
+    #musicSource {
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 
@@ -102,8 +110,8 @@
         <option value="E">angla</option>
         <option value="F">franca</option>
         <option value="D">germana</option>
-        <option value="S">hispana</option>        
-        <option value="I">itala</option>        
+        <option value="S">hispana</option>
+        <option value="I">itala</option>
         <option value="P">portugala</option>
         <option value="RO">rumana</option>
         <option value="R">rusa</option>
@@ -112,7 +120,7 @@
     </div>
 
     <div class="form-row">
-      <label for="customLanguageInput">alia lingvo au Eu au MUZ</label>
+      <label for="customLanguageInput">alia lingvo au Eu au MUZ au MZK00-MZK23</label>
 
       <input
         id="customLanguageInput"
@@ -127,9 +135,11 @@
         Se tiu chi kampo ne estas malplena, ghi estas uzata anstatau la menuo.<br>
         Eblas uzi lingvokodojn, kiel ekzemple HI, MAR (ankau kun komo, kiel ekzemple D,E).<br>
         Enigo de MUZ (por muziko) eligas elsendojn, kiuj kaj audigas pleje muzikon kaj kies celregiono estas Europo (au kiuj en Europo ofte estas kontentige riceveblaj dum almenau certa parto de tago au nokto).<br>
+        Enigo de MZK kaj du ciferoj de 00 ghis 23 eligas muzikajn elsendojn el la listo de Alan Roe por la koncerna horo; ekzemple MZK03 por 0300-0400 UTK. La tagindikoj restas montrataj; la sercho ne estas limigita al la hodiaua tago. La unua shargado povas dauri iom pli longe.<br>
         Enigo de Eu (atentu pri la majuskla E kaj minuskla u) eligas elsendojn, kies celregiono estas Europo (ghenerale au specife centra au okcidenta).<br>
         Horoj lau Universala Tempo Kunordigita; frekvencoj en kHz.<br>
         Eventuala indiko "DIGITAL" signifas, ke temas ne pri amplitudmodulado, sed pri dissendado per tekniko nome <a href="https://eo.wikipedia.org/wiki/Digital_Radio_Mondiale" target="_blank">cifereca radio monda (DRM)</a> postulanta specialan ricevilon.<br>
+        En la MZK-listo "drm" ankau indikas ciferecan dissendadon; ‡ indikas nun neaktivan tempon au frekvencon, § signifas ne chiusemajne, kaj v indikas eblan variadon. La horoj estas proksimumaj.<br>
         Jen <a href="http://www.eibispace.de/dx/README.TXT" target="_blank">listo de lingvokodoj kaj pliaj klarigoj</a>.
       </div>
     </div>
@@ -138,9 +148,22 @@
 
     <pre id="results"></pre>
 
+    <div id="musicSource" class="hint" hidden>
+      Fonto:
+      <a
+        id="musicSourceLink"
+        target="_blank"
+        rel="noopener noreferrer"
+      ></a>
+      <br>
+      <span id="musicSourceCredit"></span>
+    </div>
+
     <?!= include_('observo'); ?>
 
   </main>
+
+  <?!= include_('mzk'); ?>
 
   <script>
     const languageSelect = document.getElementById('languageSelect');
@@ -148,6 +171,10 @@
     const searchButton = document.getElementById('searchButton');
     const statusElement = document.getElementById('status');
     const resultsElement = document.getElementById('results');
+
+    const musicSourceElement = document.getElementById('musicSource');
+    const musicSourceLink = document.getElementById('musicSourceLink');
+    const musicSourceCredit = document.getElementById('musicSourceCredit');
 
     document.addEventListener('DOMContentLoaded', loadBroadcasts);
 
@@ -167,76 +194,113 @@
 
     customLanguageInput.addEventListener('input', function () {
       const sanitizedCode = customLanguageInput.value
-      .replace(/[^A-Za-z,]/g, '');
+        .replace(/[^A-Za-z0-9,]/g, '');
 
-    customLanguageInput.value = sanitizedCode === 'Eu'
-      ? sanitizedCode
-      : sanitizedCode.toUpperCase();
+      customLanguageInput.value = sanitizedCode === 'Eu'
+        ? sanitizedCode
+        : sanitizedCode.toUpperCase();
     });
 
-  function getSelectedLanguageCode() {
-    const customCode = customLanguageInput.value
-    .trim()
-    .replace(/[^A-Za-z,]/g, '');
+    function getSelectedLanguageCode() {
+      const customCode = customLanguageInput.value
+        .trim()
+        .replace(/[^A-Za-z0-9,]/g, '');
 
-    if (customCode) {
-      return customCode === 'Eu'
-        ? customCode
-        : customCode.toUpperCase();
+      if (customCode) {
+        return customCode === 'Eu'
+          ? customCode
+          : customCode.toUpperCase();
+      }
+
+      return languageSelect.value;
     }
-
-    return languageSelect.value;
-  }
 
     function loadBroadcasts() {
       const langCode = getSelectedLanguageCode();
+      const isMusicHourSearch = /^MZK/i.test(langCode);
 
       statusElement.className = '';
-      statusElement.textContent = 'Shargante ...';
+      statusElement.textContent = isMusicHourSearch
+        ? 'Shargante kaj legante la muzikan PDF-liston ...'
+        : 'Shargante ...';
+
       resultsElement.textContent = '';
+
+      musicSourceElement.hidden = true;
+      musicSourceLink.removeAttribute('href');
+      musicSourceLink.textContent = '';
+      musicSourceCredit.textContent = '';
 
       searchButton.disabled = true;
       languageSelect.disabled = true;
       customLanguageInput.disabled = true;
 
+      if (isMusicHourSearch) {
+        MZKSearch.getBroadcasts(langCode)
+          .then(showBroadcasts)
+          .catch(showBroadcastError);
+
+        return;
+      }
+
       google.script.run
-        .withSuccessHandler(function (data) {
-          statusElement.className = '';
-
-          if (data.count === 1) {
-            statusElement.textContent = 'Trovita unu elsendo por: ' + data.label;
-          } else {
-            statusElement.textContent = 'Trovitaj ' + data.count + ' elsendoj por: ' + data.label;
-          }
-
-          resultsElement.textContent = data.text;
-
-          searchButton.disabled = false;
-          languageSelect.disabled = false;
-          customLanguageInput.disabled = false;
-          customLanguageInput.focus();
-        })
-        .withFailureHandler(function (error) {
-          statusElement.className = 'error';
-          statusElement.textContent = 'Eraro dum shargado.';
-          resultsElement.textContent = error && error.message
-            ? error.message
-            : String(error);
-
-          searchButton.disabled = false;
-          languageSelect.disabled = false;
-          customLanguageInput.disabled = false;
-        })
+        .withSuccessHandler(showBroadcasts)
+        .withFailureHandler(showBroadcastError)
         .getBroadcasts(langCode);
     }
+
+    function showBroadcasts(data) {
+      statusElement.className = '';
+
+      if (data.count === 1) {
+        statusElement.textContent =
+          'Trovita unu elsendo por: ' + data.label;
+      } else {
+        statusElement.textContent =
+          'Trovitaj ' + data.count +
+          ' elsendoj por: ' + data.label;
+      }
+
+      resultsElement.textContent = data.text;
+
+      if (data.sourceUrl) {
+        musicSourceLink.href = data.sourceUrl;
+        musicSourceLink.textContent = data.sourceUrl;
+        musicSourceCredit.textContent = data.credit || '';
+        musicSourceElement.hidden = false;
+      }
+
+      searchButton.disabled = false;
+      languageSelect.disabled = false;
+      customLanguageInput.disabled = false;
+      customLanguageInput.focus();
+    }
+
+    function showBroadcastError(error) {
+      statusElement.className = 'error';
+      statusElement.textContent = 'Eraro dum shargado.';
+
+      resultsElement.textContent = error && error.message
+        ? error.message
+        : String(error);
+
+      musicSourceElement.hidden = true;
+
+      searchButton.disabled = false;
+      languageSelect.disabled = false;
+      customLanguageInput.disabled = false;
+    }
   </script>
+
   <div align="center">
     <p>Jen tiu chi ret-apo, kiel <a href="https://www.dropbox.com/scl/fi/cwm8ay81u84k2jbp4bzr0/Elsendoj_v1.0.0_1784739467565.apk?rlkey=xocjwhd3rdcqc0xkko6rdawn2&st=n5354f1t&dl=0">Android-apo &quot;Elsendoj&quot;</a>.<br>Ghi estis kreita per Web2APK disponigita de SmartrixLabs. Elshuto, instalo kaj uzo de la APK okazas je propra risko.<br>Jen chi-rilataj <a href="https://github.com/AndreasKueck/elsendoj" target="_blank">GitHub-deponejo</a> kaj <a href="https://medium.com/westphoenizier/radio-elsendoj-permallongondaj-en-esperanto-kaj-la-germana-b3d5bec516ab" target="_blank">ricevprognozo</a>.
     <br>Jen Snapchat-lensoj &quot;<a href="https://www.snapchat.com/lens/71ef325bea164496913810ce16d71a56" target="_blank">Elsendoj (areo A)</a>&quot;, &quot;<a href="https://www.snapchat.com/lens/88a3466ec42f47f0883852518b5e01c2" target="_blank">Elsendoj (areo B)</a>&quot; kaj &quot;<a href="https://www.snapchat.com/lens/8f02ab0e0f1e4f8f99204bb49f03404d" target="_blank">Elsendoj (areo C)</a>&quot;; jen chi-rilata <a href="https://github.com/AndreasKueck/lensstudioelsendojareoa" target="_blank">GitHub-deponejo</a>.</p>
   </div>
+
   <div align="center">
     <p>Fonto: <a href="http://www.eibispace.de/" target="_blank">http://www.eibispace.de/</a></p>
   </div>
+
   <div align="center">
     <p><a href="https://jhau.de/privateco.html" target="_blank">Privateco</a></p>
   </div>
