@@ -1,4 +1,4 @@
-const SOURCE_URL = 'http://www.eibispace.de/dx/bc-a26.txt';
+const SOURCE_URL = 'http://www.eibispace.de/dx/bc-b26.txt';
 
 // Altigi kashmemoran version, kia, la filtra logiko shanghighas
 const CACHE_VERSION = 'v8';
